@@ -2839,14 +2839,15 @@ void *start_timer(void *arg) {
             }
             LOG(logINFO, ("Sent frame %d [#%ld] to E%d\n", iframes,
                           frameNr + iframes, iRxEntry));
-            clock_gettime(CLOCK_REALTIME, &end);
-            int64_t timeNs = ((end.tv_sec - begin.tv_sec) * 1E9 +
-                              (end.tv_nsec - begin.tv_nsec));
-
             // sleep for (period - exptime) - if there is a next frame
-            if (iframes < numFrames) {
-                usleep(periodNs * 1000 - expUs);
+            bool wait = iframes < numFrames;
+            while (wait) {
+                clock_gettime(CLOCK_REALTIME, &end);
+                int64_t timeNs = ((end.tv_sec - begin.tv_sec) * 1E9 +
+                                  (end.tv_nsec - begin.tv_nsec));
+                if (timeNs >= periodNs) wait = false;
             }
+
             ++iRxEntry;
             if (iRxEntry == numUdpDestinations) {
                 iRxEntry = 0;
