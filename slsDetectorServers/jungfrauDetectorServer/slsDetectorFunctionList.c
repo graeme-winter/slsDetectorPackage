@@ -2770,28 +2770,6 @@ void *start_timer(void *arg) {
             clock_gettime(CLOCK_REALTIME, &begin);
             usleep(expUs);
 
-            // change gain and data for every frame
-            {
-                const int npixels = (NCHAN * NCHIP);
-                for (int i = 0; i < npixels; ++i) {
-                    int gainVal = 0;
-                    if ((i % 1024) < 300) {
-                        gainVal = 0;
-                    } else if ((i % 1024) < 600) {
-                        gainVal = 1;
-                    } else {
-                        gainVal = 3;
-                    }
-                    int dataVal =
-                        *((uint16_t *)(imageData + i * sizeof(uint16_t)));
-                    dataVal += iframes;
-                    int pixelVal =
-                        (dataVal & ~GAIN_VAL_MSK) | (gainVal << GAIN_VAL_OFST);
-                    *((uint16_t *)(imageData + i * sizeof(uint16_t))) =
-                        (uint16_t)pixelVal;
-                }
-            }
-
             int srcOffset = 0;
             int srcOffset2 = DATA_BYTES / 2;
             int row0 = (numInterfaces == 1 ? detPos[1] : detPos[3]);
@@ -2868,7 +2846,7 @@ void *start_timer(void *arg) {
             // sleep for (period - exptime)
             if (iframes < numFrames) { // if there is a next frame
                 if (periodNs > timeNs) {
-                    usleep((periodNs - timeNs) / 1000);
+                    usleep(((periodNs - expUs * 1000) - timeNs) / 1000);
                 }
             }
             ++iRxEntry;
