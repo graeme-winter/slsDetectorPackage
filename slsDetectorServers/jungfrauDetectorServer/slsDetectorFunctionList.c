@@ -2775,11 +2775,11 @@ void *start_timer(void *arg) {
                 for (int i = 0; i < npixels; ++i) {
                     int gainVal = 0;
                     if ((i % 1024) < 300) {
-                        gainVal = 1 + iframes;
+                        gainVal = 0;
                     } else if ((i % 1024) < 600) {
-                        gainVal = 2 + iframes;
+                        gainVal = 1;
                     } else {
-                        gainVal = 3 + iframes;
+                        gainVal = 3;
                     }
                     int dataVal =
                         *((uint16_t *)(imageData + i * sizeof(uint16_t)));
