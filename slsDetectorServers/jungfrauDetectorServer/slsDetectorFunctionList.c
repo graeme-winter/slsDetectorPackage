@@ -2880,8 +2880,8 @@ void *start_timer(void *arg) {
     }
     clock_gettime(CLOCK_REALTIME, &_end);
 
-    int64_t send_time_ms = ((end.tv_sec - begin.tv_sec) * 1.0e3 +
-                            (end.tv_nsec - begin.tv_nsec) * 1.0e-6);
+    int64_t send_time_ms = ((_end.tv_sec - _begin.tv_sec) * 1.0e3 +
+                            (_end.tv_nsec - _begin.tv_nsec) * 1.0e-6);
 
     closeUDPSocket(0);
     if (numInterfaces == 2) {
