@@ -2750,14 +2750,15 @@ void *start_timer(void *arg) {
         }
     }
 
+    struct timespec _begin, _end;
+    clock_gettime(CLOCK_REALTIME, &_begin);
+
     // Send data
     {
         uint64_t frameNr = 0;
         getNextFrameNumber(&frameNr);
         int iRxEntry = firstDest;
         for (int iframes = 0; iframes != numFrames; ++iframes) {
-            usleep(transmissionDelayUs);
-
             // check if manual stop
             if (sharedMemory_getStop() == 1) {
                 setNextFrameNumber(frameNr + iframes + 1);
@@ -2877,6 +2878,10 @@ void *start_timer(void *arg) {
         }
         setNextFrameNumber(frameNr + numFrames);
     }
+    clock_gettime(CLOCK_REALTIME, &_end);
+
+    int64_t send_time_ms = ((end.tv_sec - begin.tv_sec) * 1.0e3 +
+                            (end.tv_nsec - begin.tv_nsec) * 1.0e-6);
 
     closeUDPSocket(0);
     if (numInterfaces == 2) {
@@ -2884,7 +2889,7 @@ void *start_timer(void *arg) {
     }
 
     sharedMemory_setStatus(IDLE);
-    LOG(logINFOBLUE, ("Transmitting frames done\n"));
+    LOG(logINFOBLUE, ("Transmitting frames done in %.3fms\n", send_time_ms));
     return NULL;
 }
 #endif
