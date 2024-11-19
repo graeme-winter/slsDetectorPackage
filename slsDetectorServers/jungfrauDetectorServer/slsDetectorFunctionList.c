@@ -2840,12 +2840,12 @@ void *start_timer(void *arg) {
             LOG(logINFO, ("Sent frame %d [#%ld] to E%d\n", iframes,
                           frameNr + iframes, iRxEntry));
             // sleep for (period - exptime) - if there is a next frame
-            bool wait = iframes < numFrames;
+            int wait = iframes < numFrames;
             while (wait) {
                 clock_gettime(CLOCK_REALTIME, &end);
                 int64_t timeNs = ((end.tv_sec - begin.tv_sec) * 1E9 +
                                   (end.tv_nsec - begin.tv_nsec));
-                if (timeNs >= periodNs) wait = false;
+                if (timeNs >= periodNs) wait = 0;
             }
 
             ++iRxEntry;
