@@ -2843,11 +2843,9 @@ void *start_timer(void *arg) {
             int64_t timeNs = ((end.tv_sec - begin.tv_sec) * 1E9 +
                               (end.tv_nsec - begin.tv_nsec));
 
-            // sleep for (period - exptime)
-            if (iframes < numFrames) { // if there is a next frame
-                if (periodNs > timeNs) {
-                    usleep(((periodNs - expUs * 1000) - timeNs) / 1000);
-                }
+            // sleep for (period - exptime) - if there is a next frame
+            if (iframes < numFrames) {
+                usleep(periodNs * 1000 - expUs);
             }
             ++iRxEntry;
             if (iRxEntry == numUdpDestinations) {
