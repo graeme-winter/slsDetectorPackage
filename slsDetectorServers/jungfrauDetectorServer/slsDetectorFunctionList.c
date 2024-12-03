@@ -2751,20 +2751,37 @@ int startStateMachine() {
     return OK;
 }
 
+// hack to make code light remove before commit
+#define VIRTUAL 1
+
 #ifdef VIRTUAL
 void *start_timer(void *arg) {
+
+    // FIXME document what this is actually doing? Maybe it is checking the
+    // thread ID?
     if (!isControlServer) {
         return NULL;
     }
     int firstDest = getFirstUDPDestination();
+
+    // FIXME replace this with a forced cycle time which will wait for
+    // period between sending frame j and j+1
     int transmissionDelayUs = getTransmissionDelayFrame() * 1000;
     int numInterfaces = getNumberofUDPInterfaces();
     int64_t periodNs = getPeriod();
     int numFrames = (getNumFrames() * getNumTriggers() *
                      (getNumAdditionalStorageCells() + 1));
     int64_t expUs = getExpTime() / 1000;
+
+    // Data size here is 4096 x uint16_t pixels
     const int dataSize = 8192;
+
+    // For reference the packet size is 48 bytes see:
+    // https://slsdetectorgroup.github.io/devdoc/udpheader.html
     const int packetsize = dataSize + sizeof(sls_detector_header);
+
+    // If running at full speed will be 64 packets / frame for twice as
+    // many frames
     const int maxPacketsPerFrame = 128;
     const int maxRows = MAX_ROWS_PER_READOUT;
     int readNRows = getReadNRows();
@@ -2773,10 +2790,13 @@ void *start_timer(void *arg) {
             ("number of rows is -1. Assuming no partial readout (#rows).\n"));
         readNRows = MAX_ROWS_PER_READOUT;
     }
+
+    // At this point I am starting to feel like we have a lot of spare
+    // variables?
     const int packetsPerFrame =
         ((maxPacketsPerFrame / 2) * readNRows) / (maxRows / 2);
 
-    // Generate data
+    // Generate data - nope we will be pulling this from a configuration file
     char imageData[DATA_BYTES];
     memset(imageData, 0, DATA_BYTES);
     {
@@ -2789,6 +2809,10 @@ void *start_timer(void *arg) {
             if (i % pixelsPerPacket == 0) {
                 ++dataVal;
             }
+
+            // FIXME probably need to find a more sensible distribution of
+            // different gain values to use here though if pulling the data
+            // from a prepared file it doesn't matter anyway...
 
             if ((i % 1024) < 300) {
                 gainVal = 0;
