@@ -2757,7 +2757,7 @@ void *start_timer(void *arg) {
 
     char filename[80];
 
-    sprintf(filename, "/tmp/module_%d_%d.raw", detPos[3], detPos[0]);
+    sprintf(filename, "/dev/shm/module_%d_%d.raw", detPos[3], detPos[0]);
 
     struct stat fileinfo;
     stat(filename, &fileinfo);
@@ -2777,14 +2777,9 @@ void *start_timer(void *arg) {
     }
     int firstDest = getFirstUDPDestination();
 
-    // FIXME replace this with a forced cycle time which will wait for
-    // period between sending frame j and j+1
-    int transmissionDelayUs = getTransmissionDelayFrame() * 1000;
     int numInterfaces = getNumberofUDPInterfaces();
-    int64_t periodNs = getPeriod();
     int numFrames = (getNumFrames() * getNumTriggers() *
                      (getNumAdditionalStorageCells() + 1));
-    int64_t expUs = getExpTime() / 1000;
 
     // Data size here is 4096 x uint16_t pixels
     const int dataSize = 8192;
@@ -2808,16 +2803,6 @@ void *start_timer(void *arg) {
     // variables?
     const int packetsPerFrame =
         ((maxPacketsPerFrame / 2) * readNRows) / (maxRows / 2);
-
-    // Generate data - nope we will be pulling this from a configuration file
-    char imageData[DATA_BYTES];
-
-
-        const int npixels = (NCHAN * NCHIP);
-        const int pixelsPerPacket = dataSize / NUM_BYTES_PER_PIXEL;
-        int dataVal = 0;
-        int gainVal = 0;
-        int pixelVal = 0;
 
         uint64_t frameNr = 0;
         getNextFrameNumber(&frameNr);
@@ -2844,8 +2829,6 @@ void *start_timer(void *arg) {
                 break;
             }
 
-            int srcOffset = 0;
-            int srcOffset2 = DATA_BYTES / 2;
             int row0 = (numInterfaces == 1 ? detPos[1] : detPos[3]);
             int col0 = (numInterfaces == 1 ? detPos[0] : detPos[2]);
             int row1 = detPos[1];
@@ -2853,9 +2836,11 @@ void *start_timer(void *arg) {
             // loop packet (128 packets)
             for (int i = 0; i != maxPacketsPerFrame; ++i, chunk++) {
 
+                char packetData[packetsize];
+
                 unsigned long long chunk_offset = (chunk * 0x2000) % fileinfo.st_size;
                 fseek(fin, chunk_offset, SEEK_SET);
-                fread(imageData, 0x2000, 1, fin);
+                fread(packetData + sizeof(sls_detector_header), 0x2000, 1, fin);
 
                 const int startval =
                     (maxPacketsPerFrame / 2) - (packetsPerFrame / 2);
@@ -2864,8 +2849,6 @@ void *start_timer(void *arg) {
 
                 // first interface
                 if (numInterfaces == 1 || i < (maxPacketsPerFrame / 2)) {
-                    char packetData[packetsize];
-                    memset(packetData, 0, packetsize);
                     sls_detector_header *header =
                         (sls_detector_header *)(packetData);
                     header->detType = (uint16_t)myDetectorType;
@@ -2875,11 +2858,6 @@ void *start_timer(void *arg) {
                     header->modId = virtual_moduleid;
                     header->row = row0;
                     header->column = col0;
-
-                    // fill data
-                    memcpy(packetData + sizeof(sls_detector_header),
-                           imageData + srcOffset, dataSize);
-                    srcOffset += dataSize;
 
                     if (i >= startval && i <= endval) {
                         sendUDPPacket(iRxEntry, 0, packetData, packetsize);
@@ -2891,10 +2869,8 @@ void *start_timer(void *arg) {
                 else if (numInterfaces == 2 && i >= (maxPacketsPerFrame / 2)) {
                     pnum = i % (maxPacketsPerFrame / 2);
 
-                    char packetData2[packetsize];
-                    memset(packetData2, 0, packetsize);
                     sls_detector_header *header =
-                        (sls_detector_header *)(packetData2);
+                        (sls_detector_header *)(packetData);
                     header->detType = (uint16_t)myDetectorType;
                     header->version = SLS_DETECTOR_HEADER_VERSION;
                     header->frameNumber = frameNr + iframes;
@@ -2903,20 +2879,13 @@ void *start_timer(void *arg) {
                     header->row = row1;
                     header->column = col1;
 
-                    // fill data
-                    memcpy(packetData2 + sizeof(sls_detector_header),
-                           imageData + srcOffset2, dataSize);
-                    srcOffset2 += dataSize;
-
                     if (i >= startval && i <= endval) {
-                        sendUDPPacket(iRxEntry, 1, packetData2, packetsize);
+                        sendUDPPacket(iRxEntry, 1, packetData, packetsize);
                         LOG(logDEBUG1,
                             ("Sent packet: %d [interface 1]\n", pnum));
                     }
                 }
             }
-            LOG(logINFO, ("Sent frame %d [#%ld] to E%d\n", iframes,
-                          frameNr + iframes, iRxEntry));
             ++iRxEntry;
             if (iRxEntry == numUdpDestinations) {
                 iRxEntry = 0;
