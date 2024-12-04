@@ -2751,11 +2751,23 @@ int startStateMachine() {
     return OK;
 }
 
-// hack to make code light remove before commit
-#define VIRTUAL 1
-
 #ifdef VIRTUAL
 void *start_timer(void *arg) {
+
+    char filename[80];
+
+    sprintf(filename, "/tmp/module_%d_%d.raw", detPos[0], detPos[1]);
+
+    struct stat fileinfo;
+    fstat(filename, &fileinfo);
+
+    LOG(logINFO, ("RAW data file: %s size %lld", filename, fileinfo.st_size));
+
+    FILE * fin = fopen(filename, "rb");
+
+    struct timespec t0, tn;
+
+    in64_t cycle_ns = getPeriod() + getExpTime();
 
     // FIXME document what this is actually doing? Maybe it is checking the
     // thread ID?
@@ -2798,50 +2810,32 @@ void *start_timer(void *arg) {
 
     // Generate data - nope we will be pulling this from a configuration file
     char imageData[DATA_BYTES];
-    memset(imageData, 0, DATA_BYTES);
-    {
+
+
         const int npixels = (NCHAN * NCHIP);
         const int pixelsPerPacket = dataSize / NUM_BYTES_PER_PIXEL;
         int dataVal = 0;
         int gainVal = 0;
         int pixelVal = 0;
-        for (int i = 0; i < npixels; ++i) {
-            if (i % pixelsPerPacket == 0) {
-                ++dataVal;
-            }
 
-            // FIXME probably need to find a more sensible distribution of
-            // different gain values to use here though if pulling the data
-            // from a prepared file it doesn't matter anyway...
-
-            if ((i % 1024) < 300) {
-                gainVal = 0;
-            } else if ((i % 1024) < 600) {
-                gainVal = 1;
-            } else {
-                gainVal = 3;
-            }
-            pixelVal = (dataVal & ~GAIN_VAL_MSK) | (gainVal << GAIN_VAL_OFST);
-// to debug multi module geometry (row, column) in virtual servers (all pixels
-// in a module set to particular value)
-#ifdef TEST_MOD_GEOMETRY
-            *((uint16_t *)(imageData + i * sizeof(uint16_t))) =
-                portno % 1900 + (i >= npixels / 2 ? 1 : 0);
-#else
-            *((uint16_t *)(imageData + i * sizeof(uint16_t))) =
-                virtual_image_test_mode ? 0x0FFE : (uint16_t)pixelVal;
-
-#endif
-        }
-    }
-
-    // Send data
-    {
         uint64_t frameNr = 0;
         getNextFrameNumber(&frameNr);
         int iRxEntry = firstDest;
+        int chunk = 0;
+
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+
+        int64_t t0_ns = t0.tv_sec * 1000000000 + t0.tv_nsec;
+
         for (int iframes = 0; iframes != numFrames; ++iframes) {
-            usleep(transmissionDelayUs);
+
+            // busy wait here
+            int64_t target_ns = cycle_ns * iframes;
+            while (1) {
+                clock_gettime(CLOCK_MONOTONIC, &tn);
+                int64 dt = tn.tv_sec * 1000000000 + tn.tv_nsec - t0_ns;
+                if (dt >= target_ns) break;
+            }
 
             // check if manual stop
             if (sharedMemory_getStop() == 1) {
@@ -2849,45 +2843,6 @@ void *start_timer(void *arg) {
                 break;
             }
 
-            // sleep for exposure time
-            struct timespec begin, end;
-            clock_gettime(CLOCK_REALTIME, &begin);
-            usleep(expUs);
-
-#ifdef TEST_CHANGE_GAIN_EVERY_FRAME
-            // change gain and data for every frame
-            {
-                const int npixels = (NCHAN * NCHIP);
-
-                // random gain values, 2 becomes 3 as 2 is invalid
-                int randomGainValues[3] = {0};
-                srand(time(0));
-                for (int i = 0; i != 3; ++i) {
-                    int r = rand() % 3;
-                    if (r == 2)
-                        r = 3;
-                    randomGainValues[i] = r;
-                }
-
-                for (int i = 0; i < npixels; ++i) {
-                    int gainVal = 0;
-                    if ((i % 1024) < 300) {
-                        gainVal = randomGainValues[0];
-                    } else if ((i % 1024) < 600) {
-                        gainVal = randomGainValues[1];
-                    } else {
-                        gainVal = randomGainValues[2];
-                    }
-                    int dataVal =
-                        *((uint16_t *)(imageData + i * sizeof(uint16_t)));
-                    dataVal += iframes;
-                    int pixelVal =
-                        (dataVal & ~GAIN_VAL_MSK) | (gainVal << GAIN_VAL_OFST);
-                    *((uint16_t *)(imageData + i * sizeof(uint16_t))) =
-                        (uint16_t)pixelVal;
-                }
-            }
-#endif
             int srcOffset = 0;
             int srcOffset2 = DATA_BYTES / 2;
             int row0 = (numInterfaces == 1 ? detPos[1] : detPos[3]);
@@ -2895,7 +2850,11 @@ void *start_timer(void *arg) {
             int row1 = detPos[1];
             int col1 = detPos[0];
             // loop packet (128 packets)
-            for (int i = 0; i != maxPacketsPerFrame; ++i) {
+            for (int i = 0; i != maxPacketsPerFrame; ++i, chunk++) {
+
+                unsigned long long chunk_offset = (chunk * 0x2000) % fileinfo.st_size;
+                fseek(fin, chunk_offset, SEEK_SET);
+                fread(imageData, 0x2000, 1, fin);
 
                 const int startval =
                     (maxPacketsPerFrame / 2) - (packetsPerFrame / 2);
@@ -2957,23 +2916,12 @@ void *start_timer(void *arg) {
             }
             LOG(logINFO, ("Sent frame %d [#%ld] to E%d\n", iframes,
                           frameNr + iframes, iRxEntry));
-            clock_gettime(CLOCK_REALTIME, &end);
-            int64_t timeNs = ((end.tv_sec - begin.tv_sec) * 1E9 +
-                              (end.tv_nsec - begin.tv_nsec));
-
-            // sleep for (period - exptime)
-            if (iframes < numFrames) { // if there is a next frame
-                if (periodNs > timeNs) {
-                    usleep((periodNs - timeNs) / 1000);
-                }
-            }
             ++iRxEntry;
             if (iRxEntry == numUdpDestinations) {
                 iRxEntry = 0;
             }
         }
         setNextFrameNumber(frameNr + numFrames);
-    }
 
     closeUDPSocket(0);
     if (numInterfaces == 2) {
@@ -2982,6 +2930,9 @@ void *start_timer(void *arg) {
 
     sharedMemory_setStatus(IDLE);
     LOG(logINFOBLUE, ("Transmitting frames done\n"));
+
+    fclose(fin);
+
     return NULL;
 }
 #endif
