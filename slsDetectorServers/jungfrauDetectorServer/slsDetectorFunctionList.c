@@ -2760,7 +2760,7 @@ void *start_timer(void *arg) {
     sprintf(filename, "/tmp/module_%d_%d.raw", detPos[0], detPos[1]);
 
     struct stat fileinfo;
-    fstat(filename, &fileinfo);
+    stat(filename, &fileinfo);
 
     LOG(logINFO, ("RAW data file: %s size %lld", filename, fileinfo.st_size));
 
