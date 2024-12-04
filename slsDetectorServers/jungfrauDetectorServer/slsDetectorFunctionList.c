@@ -2762,7 +2762,7 @@ void *start_timer(void *arg) {
     struct stat fileinfo;
     stat(filename, &fileinfo);
 
-    LOG(logINFO, ("RAW data file: %s size %lld", filename, fileinfo.st_size));
+    LOG(logINFO, ("RAW data file: %s size %lld\n", filename, fileinfo.st_size));
 
     FILE * fin = fopen(filename, "rb");
 
@@ -2922,6 +2922,10 @@ void *start_timer(void *arg) {
                 iRxEntry = 0;
             }
         }
+        int64_t tn_ns = tn.tv_sec * 1000000000 + tn.tv_nsec;
+
+        LOG(logINFO, ("Send %d frames in %fs\n", numFrames, 1.0e-9 * (tn_ns  t0_ns)));
+
         setNextFrameNumber(frameNr + numFrames);
 
     closeUDPSocket(0);
