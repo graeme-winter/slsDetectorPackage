@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <unistd.h> // usleep
 #ifdef VIRTUAL
 #include <pthread.h>
