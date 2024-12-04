@@ -2768,7 +2768,7 @@ void *start_timer(void *arg) {
 
     struct timespec t0, tn;
 
-    in64_t cycle_ns = getPeriod() + getExpTime();
+    int64_t cycle_ns = getPeriod() + getExpTime();
 
     // FIXME document what this is actually doing? Maybe it is checking the
     // thread ID?
