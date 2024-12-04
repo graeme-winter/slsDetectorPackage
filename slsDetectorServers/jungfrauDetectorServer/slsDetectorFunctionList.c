@@ -2757,7 +2757,7 @@ void *start_timer(void *arg) {
 
     char filename[80];
 
-    sprintf(filename, "/tmp/module_%d_%d.raw", detPos[0], detPos[1]);
+    sprintf(filename, "/tmp/module_%d_%d.raw", detPos[3], detPos[0]);
 
     struct stat fileinfo;
     stat(filename, &fileinfo);
