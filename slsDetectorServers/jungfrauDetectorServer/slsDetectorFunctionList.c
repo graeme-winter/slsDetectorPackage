@@ -2834,7 +2834,7 @@ void *start_timer(void *arg) {
             int64_t target_ns = cycle_ns * iframes;
             while (1) {
                 clock_gettime(CLOCK_MONOTONIC, &tn);
-                int64 dt = tn.tv_sec * 1000000000 + tn.tv_nsec - t0_ns;
+                int64_t dt = tn.tv_sec * 1000000000 + tn.tv_nsec - t0_ns;
                 if (dt >= target_ns) break;
             }
 
