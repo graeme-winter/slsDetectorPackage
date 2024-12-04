@@ -2924,7 +2924,7 @@ void *start_timer(void *arg) {
         }
         int64_t tn_ns = tn.tv_sec * 1000000000 + tn.tv_nsec;
 
-        LOG(logINFO, ("Send %d frames in %fs\n", numFrames, 1.0e-9 * (tn_ns  t0_ns)));
+        LOG(logINFO, ("Send %d frames in %fs\n", numFrames, 1.0e-9 * (tn_ns - t0_ns)));
 
         setNextFrameNumber(frameNr + numFrames);
 
