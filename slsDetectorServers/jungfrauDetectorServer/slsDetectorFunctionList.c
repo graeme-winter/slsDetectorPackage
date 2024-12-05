@@ -995,6 +995,10 @@ int getNextFrameNumber(uint64_t *retval) {
     return OK;
 }
 
+#ifdef VIRTUAL
+void setup_virtual_data(void);
+#endif
+
 void setNumFrames(int64_t val) {
     if (getPedestalMode()) {
         return;
@@ -1003,6 +1007,12 @@ void setNumFrames(int64_t val) {
         LOG(logINFO, ("Setting number of frames %lld\n", (long long int)val));
         set64BitReg(val, SET_FRAMES_LSB_REG, SET_FRAMES_MSB_REG);
     }
+
+    // FIXME PERF FIXME SIM in here we can set up the virtual data source
+    // ifdef VIRTUAL: this will never be cleared...
+#ifdef VIRTUAL
+    setup_virtual_data();
+#endif
 }
 
 int64_t getNumFrames() {
@@ -2731,6 +2741,9 @@ int startStateMachine() {
         return FAIL;
     }
     sharedMemory_setStatus(RUNNING);
+
+    // FIXME PERF: spin off two threads here each writing half the frames to
+    // their UDP socket
     if (pthread_create(&pthread_virtual_tid, NULL, &start_timer, NULL)) {
         LOG(logERROR, ("Could not start Virtual acquisition thread\n"));
         sharedMemory_setStatus(IDLE);
@@ -2753,18 +2766,34 @@ int startStateMachine() {
 }
 
 #ifdef VIRTUAL
-void *start_timer(void *arg) {
+
+char * raw_data = NULL;
+struct stat fileinfo;
+
+void setup_virtual_data(void) {
+
+    if (raw_data) free(raw_data);
 
     char filename[80];
 
     sprintf(filename, "/dev/shm/module_%d_%d.raw", detPos[3], detPos[0]);
 
-    struct stat fileinfo;
     stat(filename, &fileinfo);
 
     LOG(logINFO, ("RAW data file: %s size %lld\n", filename, fileinfo.st_size));
 
+    raw_data = (char *) malloc (fileinfo.st_size);
+
     FILE * fin = fopen(filename, "rb");
+    fread(raw_data, fileinfo.st_size, 1, fin);
+    fclose(fin);
+
+}
+
+#endif
+
+#ifdef VIRTUAL
+void *start_timer(void *arg) {
 
     struct timespec t0, tn;
 
@@ -2839,8 +2868,7 @@ void *start_timer(void *arg) {
                 char packetData[packetsize];
 
                 unsigned long long chunk_offset = (chunk * 0x2000) % fileinfo.st_size;
-                fseek(fin, chunk_offset, SEEK_SET);
-                fread(packetData + sizeof(sls_detector_header), 0x2000, 1, fin);
+                memcpy(packetData + sizeof(sls_detector_header), raw_data + chunk_offset, 0x2000);
 
                 const int startval =
                     (maxPacketsPerFrame / 2) - (packetsPerFrame / 2);
@@ -2904,8 +2932,6 @@ void *start_timer(void *arg) {
 
     sharedMemory_setStatus(IDLE);
     LOG(logINFOBLUE, ("Transmitting frames done\n"));
-
-    fclose(fin);
 
     return NULL;
 }
