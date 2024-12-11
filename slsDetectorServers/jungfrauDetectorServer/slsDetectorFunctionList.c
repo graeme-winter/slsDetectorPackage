@@ -2845,12 +2845,10 @@ void *start_timer(void *arg) {
         for (int iframes = 0; iframes != numFrames; ++iframes) {
 
             // busy wait here
-            int64_t target_ns = cycle_ns * iframes;
-            while (1) {
-                clock_gettime(CLOCK_MONOTONIC, &tn);
-                int64_t dt = tn.tv_sec * 1000000000 + tn.tv_nsec - t0_ns;
-                if (dt >= target_ns) break;
-            }
+            int64_t target_ns = t0_ns + cycle_ns * iframes;
+	    tn.tv_nsec = target_ns % 1000000000;
+	    tn.tv_sec = target_ns / 1000000000;
+	    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &tn, NULL);
 
             // check if manual stop
             if (sharedMemory_getStop() == 1) {
