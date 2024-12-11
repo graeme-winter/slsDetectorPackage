@@ -1715,6 +1715,20 @@ int configureMAC() {
                  src_ip2, src_mac2, srcport2, dst_ip2, dst_mac2, dstport2));
         }
 #ifdef VIRTUAL
+        if (setUDPSourceDetails(iRxEntry, 0, src_ip) == FAIL) {
+            LOG(logERROR, ("could not set udp source IP for "
+                           "interface 1 [entry:%d] \n",
+                           iRxEntry));
+            return FAIL;
+        }
+        if (numInterfaces == 2 &&
+            setUDPSourceDetails(iRxEntry, 1, src_ip2) == FAIL) {
+            LOG(logERROR, ("could not set udp source IP for "
+                           "interface 2 [entry:%d]\n",
+                           iRxEntry));
+            return FAIL;
+        }
+
         if (setUDPDestinationDetails(iRxEntry, 0, dst_ip, dstport) == FAIL) {
             LOG(logERROR, ("could not set udp destination IP and port for "
                            "interface 1 [entry:%d] \n",

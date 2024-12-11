@@ -10,6 +10,7 @@ void setNumberOfUDPDestinations(int value);
 
 int setUDPDestinationDetails(int iRxEntry, int index, const char *ip,
                              unsigned short int port);
+int setUDPSourceDetails(int iRxEntry, int index, const char *ip);
 int createUDPSocket(int index);
 
 int sendUDPPacket(int iRxEntry, int index, const char *buf, int length);
