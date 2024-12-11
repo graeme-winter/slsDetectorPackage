@@ -86,6 +86,14 @@ int setUDPDestinationDetails(int iRxEntry, int index, const char *ip,
 
 int createUDPSocket(int index) {
 
+
+
+
+    int sendbuff;
+    socklen_t optlen;
+
+    optlen = sizeof(sendbuff);
+
     for (int iRxEntry = 0; iRxEntry != numUdpDestinations; ++iRxEntry) {
 
         LOG(logDEBUG2,
@@ -118,15 +126,17 @@ int createUDPSocket(int index) {
                            gai_strerror(errno)));
             return FAIL;
         }
+        getsockopt(udpSockfd[iRxEntry][index], SOL_SOCKET, SO_SNDBUF, &sendbuff, &optlen);
         LOG(logINFO, ("Udp client socket created for server (entry:%d, port "
-                      "%d, ip:%s)\n",
+                      "%d, ip:%s, buffer:%d)\n",
                       iRxEntry, udpDestinationPort[iRxEntry][index],
-                      udpDestinationIp[iRxEntry][index]));
+                      udpDestinationIp[iRxEntry][index], sendbuff));
 
         // Using connect expects that the receiver (udp server) exists to listen
         // to these packets connecting allows to use "send/write" instead of
         // "sendto", avoiding checking for server address for each packet using
         // write without a connect will end in segv
+        connect(udpSockfd[iRxEntry][index], udpServerAddrInfo[iRxEntry][index]->ai_addr, udpServerAddrInfo[iRxEntry][index]->ai_addrlen);
         LOG(logINFO, ("Udp client socket connected [%d, %d, %s]\n", iRxEntry,
                       udpDestinationPort[iRxEntry][index],
                       udpDestinationIp[iRxEntry][index]));
@@ -135,6 +145,19 @@ int createUDPSocket(int index) {
 }
 
 int sendUDPPacket(int iRxEntry, int index, const char *buf, int length) {
+    int n = send(udpSockfd[iRxEntry][index], buf, length, 0);
+    // udp sends atomically, no need to handle partial data
+    if (n == -1) {
+        LOG(logERROR, ("Could not send udp packet for socket %d [entry:%d]. "
+                       "(Error code:%d, %s)\n",
+                       index, iRxEntry, errno, gai_strerror(errno)));
+    } else {
+        LOG(logDEBUG2, ("%d bytes sent\n", n));
+    }
+    return n;
+}
+
+int sendUDPPacket_original(int iRxEntry, int index, const char *buf, int length) {
     int n = sendto(udpSockfd[iRxEntry][index], buf, length, 0,
                    udpServerAddrInfo[iRxEntry][index]->ai_addr,
                    udpServerAddrInfo[iRxEntry][index]->ai_addrlen);
