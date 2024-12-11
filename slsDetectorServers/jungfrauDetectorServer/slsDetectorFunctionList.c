@@ -2861,9 +2861,10 @@ void *start_timer(void *arg) {
             int row1 = detPos[1];
             int col1 = detPos[0];
             // loop packet (128 packets)
+            char packetDataBuffer[packetsize * 128];
             for (int i = 0; i != maxPacketsPerFrame; ++i, chunk++) {
 
-                char packetData[packetsize];
+                char *packetData = packetDataBuffer + (i & 0x7f) * packetsize;
 
                 unsigned long long chunk_offset = (chunk * 0x2000) % fileinfo.st_size;
                 memcpy(packetData + sizeof(sls_detector_header), raw_data + chunk_offset, 0x2000);
