@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <unistd.h> // usleep
 #ifdef VIRTUAL
 #include <pthread.h>
@@ -994,6 +995,10 @@ int getNextFrameNumber(uint64_t *retval) {
     return OK;
 }
 
+#ifdef VIRTUAL
+void setup_virtual_data(void);
+#endif
+
 void setNumFrames(int64_t val) {
     if (getPedestalMode()) {
         return;
@@ -1002,6 +1007,12 @@ void setNumFrames(int64_t val) {
         LOG(logINFO, ("Setting number of frames %lld\n", (long long int)val));
         set64BitReg(val, SET_FRAMES_LSB_REG, SET_FRAMES_MSB_REG);
     }
+
+    // FIXME PERF FIXME SIM in here we can set up the virtual data source
+    // ifdef VIRTUAL: this will never be cleared...
+#ifdef VIRTUAL
+    setup_virtual_data();
+#endif
 }
 
 int64_t getNumFrames() {
@@ -1704,6 +1715,20 @@ int configureMAC() {
                  src_ip2, src_mac2, srcport2, dst_ip2, dst_mac2, dstport2));
         }
 #ifdef VIRTUAL
+        if (setUDPSourceDetails(iRxEntry, 0, src_ip) == FAIL) {
+            LOG(logERROR, ("could not set udp source IP for "
+                           "interface 1 [entry:%d] \n",
+                           iRxEntry));
+            return FAIL;
+        }
+        if (numInterfaces == 2 &&
+            setUDPSourceDetails(iRxEntry, 1, src_ip2) == FAIL) {
+            LOG(logERROR, ("could not set udp source IP for "
+                           "interface 2 [entry:%d]\n",
+                           iRxEntry));
+            return FAIL;
+        }
+
         if (setUDPDestinationDetails(iRxEntry, 0, dst_ip, dstport) == FAIL) {
             LOG(logERROR, ("could not set udp destination IP and port for "
                            "interface 1 [entry:%d] \n",
@@ -2730,6 +2755,9 @@ int startStateMachine() {
         return FAIL;
     }
     sharedMemory_setStatus(RUNNING);
+
+    // FIXME PERF: spin off two threads here each writing half the frames to
+    // their UDP socket
     if (pthread_create(&pthread_virtual_tid, NULL, &start_timer, NULL)) {
         LOG(logERROR, ("Could not start Virtual acquisition thread\n"));
         sharedMemory_setStatus(IDLE);
@@ -2752,19 +2780,59 @@ int startStateMachine() {
 }
 
 #ifdef VIRTUAL
+
+char * raw_data = NULL;
+struct stat fileinfo;
+
+void setup_virtual_data(void) {
+
+    if (raw_data) free(raw_data);
+
+    char filename[80];
+
+    sprintf(filename, "/dev/shm/module_%d_%d.raw", detPos[3], detPos[0]);
+
+    stat(filename, &fileinfo);
+
+    LOG(logINFO, ("RAW data file: %s size %lld\n", filename, fileinfo.st_size));
+
+    raw_data = (char *) malloc (fileinfo.st_size);
+
+    FILE * fin = fopen(filename, "rb");
+    fread(raw_data, fileinfo.st_size, 1, fin);
+    fclose(fin);
+
+}
+
+#endif
+
+#ifdef VIRTUAL
 void *start_timer(void *arg) {
+
+    struct timespec t0, tn;
+
+    int64_t cycle_ns = getPeriod() + getExpTime();
+
+    // FIXME document what this is actually doing? Maybe it is checking the
+    // thread ID?
     if (!isControlServer) {
         return NULL;
     }
     int firstDest = getFirstUDPDestination();
-    int transmissionDelayUs = getTransmissionDelayFrame() * 1000;
+
     int numInterfaces = getNumberofUDPInterfaces();
-    int64_t periodNs = getPeriod();
     int numFrames = (getNumFrames() * getNumTriggers() *
                      (getNumAdditionalStorageCells() + 1));
-    int64_t expUs = getExpTime() / 1000;
+
+    // Data size here is 4096 x uint16_t pixels
     const int dataSize = 8192;
+
+    // For reference the packet size is 48 bytes see:
+    // https://slsdetectorgroup.github.io/devdoc/udpheader.html
     const int packetsize = dataSize + sizeof(sls_detector_header);
+
+    // If running at full speed will be 64 packets / frame for twice as
+    // many frames
     const int maxPacketsPerFrame = 128;
     const int maxRows = MAX_ROWS_PER_READOUT;
     int readNRows = getReadNRows();
@@ -2773,51 +2841,28 @@ void *start_timer(void *arg) {
             ("number of rows is -1. Assuming no partial readout (#rows).\n"));
         readNRows = MAX_ROWS_PER_READOUT;
     }
+
+    // At this point I am starting to feel like we have a lot of spare
+    // variables?
     const int packetsPerFrame =
         ((maxPacketsPerFrame / 2) * readNRows) / (maxRows / 2);
 
-    // Generate data
-    char imageData[DATA_BYTES];
-    memset(imageData, 0, DATA_BYTES);
-    {
-        const int npixels = (NCHAN * NCHIP);
-        const int pixelsPerPacket = dataSize / NUM_BYTES_PER_PIXEL;
-        int dataVal = 0;
-        int gainVal = 0;
-        int pixelVal = 0;
-        for (int i = 0; i < npixels; ++i) {
-            if (i % pixelsPerPacket == 0) {
-                ++dataVal;
-            }
-
-            if ((i % 1024) < 300) {
-                gainVal = 0;
-            } else if ((i % 1024) < 600) {
-                gainVal = 1;
-            } else {
-                gainVal = 3;
-            }
-            pixelVal = (dataVal & ~GAIN_VAL_MSK) | (gainVal << GAIN_VAL_OFST);
-// to debug multi module geometry (row, column) in virtual servers (all pixels
-// in a module set to particular value)
-#ifdef TEST_MOD_GEOMETRY
-            *((uint16_t *)(imageData + i * sizeof(uint16_t))) =
-                portno % 1900 + (i >= npixels / 2 ? 1 : 0);
-#else
-            *((uint16_t *)(imageData + i * sizeof(uint16_t))) =
-                virtual_image_test_mode ? 0x0FFE : (uint16_t)pixelVal;
-
-#endif
-        }
-    }
-
-    // Send data
-    {
         uint64_t frameNr = 0;
         getNextFrameNumber(&frameNr);
         int iRxEntry = firstDest;
+        int chunk = 0;
+
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+
+        int64_t t0_ns = t0.tv_sec * 1000000000 + t0.tv_nsec;
+
         for (int iframes = 0; iframes != numFrames; ++iframes) {
-            usleep(transmissionDelayUs);
+
+            // busy wait here
+            int64_t target_ns = t0_ns + cycle_ns * iframes;
+	    tn.tv_nsec = target_ns % 1000000000;
+	    tn.tv_sec = target_ns / 1000000000;
+	    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &tn, NULL);
 
             // check if manual stop
             if (sharedMemory_getStop() == 1) {
@@ -2825,53 +2870,18 @@ void *start_timer(void *arg) {
                 break;
             }
 
-            // sleep for exposure time
-            struct timespec begin, end;
-            clock_gettime(CLOCK_REALTIME, &begin);
-            usleep(expUs);
-
-#ifdef TEST_CHANGE_GAIN_EVERY_FRAME
-            // change gain and data for every frame
-            {
-                const int npixels = (NCHAN * NCHIP);
-
-                // random gain values, 2 becomes 3 as 2 is invalid
-                int randomGainValues[3] = {0};
-                srand(time(0));
-                for (int i = 0; i != 3; ++i) {
-                    int r = rand() % 3;
-                    if (r == 2)
-                        r = 3;
-                    randomGainValues[i] = r;
-                }
-
-                for (int i = 0; i < npixels; ++i) {
-                    int gainVal = 0;
-                    if ((i % 1024) < 300) {
-                        gainVal = randomGainValues[0];
-                    } else if ((i % 1024) < 600) {
-                        gainVal = randomGainValues[1];
-                    } else {
-                        gainVal = randomGainValues[2];
-                    }
-                    int dataVal =
-                        *((uint16_t *)(imageData + i * sizeof(uint16_t)));
-                    dataVal += iframes;
-                    int pixelVal =
-                        (dataVal & ~GAIN_VAL_MSK) | (gainVal << GAIN_VAL_OFST);
-                    *((uint16_t *)(imageData + i * sizeof(uint16_t))) =
-                        (uint16_t)pixelVal;
-                }
-            }
-#endif
-            int srcOffset = 0;
-            int srcOffset2 = DATA_BYTES / 2;
             int row0 = (numInterfaces == 1 ? detPos[1] : detPos[3]);
             int col0 = (numInterfaces == 1 ? detPos[0] : detPos[2]);
             int row1 = detPos[1];
             int col1 = detPos[0];
             // loop packet (128 packets)
-            for (int i = 0; i != maxPacketsPerFrame; ++i) {
+            char packetDataBuffer[packetsize * 128];
+            for (int i = 0; i != maxPacketsPerFrame; ++i, chunk++) {
+
+                char *packetData = packetDataBuffer + (i & 0x7f) * packetsize;
+
+                unsigned long long chunk_offset = (chunk * 0x2000) % fileinfo.st_size;
+                memcpy(packetData + sizeof(sls_detector_header), raw_data + chunk_offset, 0x2000);
 
                 const int startval =
                     (maxPacketsPerFrame / 2) - (packetsPerFrame / 2);
@@ -2880,8 +2890,6 @@ void *start_timer(void *arg) {
 
                 // first interface
                 if (numInterfaces == 1 || i < (maxPacketsPerFrame / 2)) {
-                    char packetData[packetsize];
-                    memset(packetData, 0, packetsize);
                     sls_detector_header *header =
                         (sls_detector_header *)(packetData);
                     header->detType = (uint16_t)myDetectorType;
@@ -2891,11 +2899,6 @@ void *start_timer(void *arg) {
                     header->modId = virtual_moduleid;
                     header->row = row0;
                     header->column = col0;
-
-                    // fill data
-                    memcpy(packetData + sizeof(sls_detector_header),
-                           imageData + srcOffset, dataSize);
-                    srcOffset += dataSize;
 
                     if (i >= startval && i <= endval) {
                         sendUDPPacket(iRxEntry, 0, packetData, packetsize);
@@ -2907,10 +2910,8 @@ void *start_timer(void *arg) {
                 else if (numInterfaces == 2 && i >= (maxPacketsPerFrame / 2)) {
                     pnum = i % (maxPacketsPerFrame / 2);
 
-                    char packetData2[packetsize];
-                    memset(packetData2, 0, packetsize);
                     sls_detector_header *header =
-                        (sls_detector_header *)(packetData2);
+                        (sls_detector_header *)(packetData);
                     header->detType = (uint16_t)myDetectorType;
                     header->version = SLS_DETECTOR_HEADER_VERSION;
                     header->frameNumber = frameNr + iframes;
@@ -2919,28 +2920,11 @@ void *start_timer(void *arg) {
                     header->row = row1;
                     header->column = col1;
 
-                    // fill data
-                    memcpy(packetData2 + sizeof(sls_detector_header),
-                           imageData + srcOffset2, dataSize);
-                    srcOffset2 += dataSize;
-
                     if (i >= startval && i <= endval) {
-                        sendUDPPacket(iRxEntry, 1, packetData2, packetsize);
+                        sendUDPPacket(iRxEntry, 1, packetData, packetsize);
                         LOG(logDEBUG1,
                             ("Sent packet: %d [interface 1]\n", pnum));
                     }
-                }
-            }
-            LOG(logINFO, ("Sent frame %d [#%ld] to E%d\n", iframes,
-                          frameNr + iframes, iRxEntry));
-            clock_gettime(CLOCK_REALTIME, &end);
-            int64_t timeNs = ((end.tv_sec - begin.tv_sec) * 1E9 +
-                              (end.tv_nsec - begin.tv_nsec));
-
-            // sleep for (period - exptime)
-            if (iframes < numFrames) { // if there is a next frame
-                if (periodNs > timeNs) {
-                    usleep((periodNs - timeNs) / 1000);
                 }
             }
             ++iRxEntry;
@@ -2948,8 +2932,11 @@ void *start_timer(void *arg) {
                 iRxEntry = 0;
             }
         }
+        int64_t tn_ns = tn.tv_sec * 1000000000 + tn.tv_nsec;
+
+        LOG(logINFO, ("Send %d frames in %fs\n", numFrames, 1.0e-9 * (tn_ns - t0_ns)));
+
         setNextFrameNumber(frameNr + numFrames);
-    }
 
     closeUDPSocket(0);
     if (numInterfaces == 2) {
@@ -2958,6 +2945,7 @@ void *start_timer(void *arg) {
 
     sharedMemory_setStatus(IDLE);
     LOG(logINFOBLUE, ("Transmitting frames done\n"));
+
     return NULL;
 }
 #endif
